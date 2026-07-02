@@ -422,24 +422,28 @@
         camera.position.set(0, 1.8, 9);
 
         const isFinePointer = window.matchMedia('(hover: hover) and (pointer: fine)').matches;
-        const isMobile = window.innerWidth < 820 || !isFinePointer;
+        const isMobile = window.innerWidth < 820 || !isFinePointer || window.navigator.hardwareConcurrency <= 4;
 
         const renderer = new THREE.WebGLRenderer({ canvas, antialias: !isMobile });
         renderer.setSize(window.innerWidth, window.innerHeight);
-        renderer.setPixelRatio(Math.min(window.devicePixelRatio, isMobile ? 1.5 : 2));
+        renderer.setPixelRatio(Math.min(window.devicePixelRatio, isMobile ? 1 : 1.5));
         renderer.outputEncoding = THREE.sRGBEncoding;
         renderer.toneMapping = THREE.ACESFilmicToneMapping;
-        renderer.toneMappingExposure = 1.45;
-        renderer.shadowMap.enabled = true;
+        renderer.toneMappingExposure = isMobile ? 1.1 : 1.45;
+        renderer.shadowMap.enabled = !isMobile;
         renderer.shadowMap.type = THREE.PCFSoftShadowMap;
 
-        // ---- Post-processing: bloom + subtle depth of field (DoF skipped on mobile for performance) ----
+        // ---- Post-processing: keep it light on mobile ----
         const composer = new THREE.EffectComposer(renderer);
         composer.addPass(new THREE.RenderPass(scene, camera));
-        const bloomPass = new THREE.UnrealBloomPass(new THREE.Vector2(window.innerWidth, window.innerHeight), isMobile ? 0.25 : 0.4, 0.4, 0.92);
-        composer.addPass(bloomPass);
-        const bokehPass = new THREE.BokehPass(scene, camera, { focus: 9, aperture: 0.00025, maxblur: 0.006 });
-        if (!isMobile) composer.addPass(bokehPass);
+        let bloomPass = null;
+        let bokehPass = null;
+        if (!isMobile) {
+            bloomPass = new THREE.UnrealBloomPass(new THREE.Vector2(window.innerWidth, window.innerHeight), 0.4, 0.4, 0.92);
+            composer.addPass(bloomPass);
+            bokehPass = new THREE.BokehPass(scene, camera, { focus: 9, aperture: 0.00025, maxblur: 0.006 });
+            composer.addPass(bokehPass);
+        }
 
         // ---- Procedural studio environment map (subtle gold reflection band) ----
         function makeStudioEnv() {
@@ -496,15 +500,17 @@
         scene.add(frontFill);
 
         // ============================================================
-        //  REFLECTIVE SHOWROOM FLOOR
+        //  SHOWROOM FLOOR
         // ============================================================
         const floorGeo = new THREE.PlaneGeometry(60, 60);
-        const floor = new THREE.Reflector(floorGeo, {
-            clipBias: 0.003,
-            textureWidth: isMobile ? 512 : 1024,
-            textureHeight: isMobile ? 512 : 1024,
-            color: 0x0a0a0a,
-        });
+        const floor = isMobile
+            ? new THREE.Mesh(floorGeo, new THREE.MeshStandardMaterial({ color: 0x0a0a0a, roughness: 0.95, metalness: 0.02 }))
+            : new THREE.Reflector(floorGeo, {
+                clipBias: 0.003,
+                textureWidth: 1024,
+                textureHeight: 1024,
+                color: 0x0a0a0a,
+            });
         floor.rotation.x = -Math.PI / 2;
         floor.position.y = 0;
         scene.add(floor);
@@ -841,8 +847,11 @@
         //  ANIMATE
         // ============================================================
         let time = 0;
-        function animate() {
+        let lastFrame = 0;
+        function animate(now) {
             requestAnimationFrame(animate);
+            if (isMobile && now - lastFrame < 33) return;
+            lastFrame = now;
             time += 0.016;
 
             const target = getScrollProgress();
@@ -859,7 +868,7 @@
 
             if (!isDragging) carGroup.rotation.y += 0.0022;
 
-            bokehPass.uniforms['focus'].value = camera.position.distanceTo(look);
+            if (bokehPass) bokehPass.uniforms['focus'].value = camera.position.distanceTo(look);
 
             carGroup.updateMatrixWorld();
             updateHotspots();
